@@ -1,4 +1,4 @@
-name: Build APK
+name: Build APK Tauri
 
 on:
   push:
@@ -7,42 +7,92 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
-      - name: Décompresser et localiser le projet
+      - name: DÃ©compresser et localiser le projet Tauri
         run: |
           set -e
-          echo "=== Fichiers à la racine ==="
+          echo "=== Fichiers Ã  la racine ==="
           ls -la
           ZIP=$(ls *.zip 2>/dev/null | head -n 1)
-          if [ -z "$ZIP" ]; then echo "ERREUR: aucun .zip à la racine du dépôt"; exit 1; fi
-          echo "Zip trouvé: $ZIP"
+          if [ -z "$ZIP" ]; then echo "ERREUR: aucun .zip Ã  la racine du dÃ©pÃ´t"; exit 1; fi
+          echo "Zip trouvÃ©: $ZIP"
           unzip -q "$ZIP" -d _extracted
-          echo "=== Contenu extrait ==="
-          find _extracted -maxdepth 3 -type f | head -n 40
-          SETTINGS=$(find _extracted -name "settings.gradle*" | head -n 1)
-          if [ -z "$SETTINGS" ]; then echo "ERREUR: settings.gradle introuvable dans le zip"; exit 1; fi
-          DIR=$(dirname "$SETTINGS")
-          echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
-          echo "Projet trouvé dans: $DIR"
+          CONF=$(find _extracted -path "*/src-tauri/tauri.conf.json" | head -n 1)
+          if [ -z "$CONF" ]; then
+            echo "ERREUR: projet Tauri introuvable (src-tauri/tauri.conf.json manquant)"
+            find _extracted -maxdepth 3 -type d
+            exit 1
+          fi
+          APP_DIR=$(cd "$(dirname "$(dirname "$CONF")")" && pwd)
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
+          echo "Projet Tauri trouvÃ© dans: $APP_DIR"
+          ls -la "$APP_DIR"
 
-      - uses: actions/setup-java@v4
+      - name: Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Java (JDK 17)
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - uses: gradle/actions/setup-gradle@v4
+      - name: Rust + cibles Android
+        uses: dtolnay/rust-toolchain@stable
         with:
-          gradle-version: '8.7'
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
 
-      - name: Compiler l'APK
+      - name: SDK Android
+        uses: android-actions/setup-android@v3
+
+      - name: Installer le NDK (version fixe, compatible Tauri)
         run: |
           set -e
-          cd "$PROJECT_DIR"
-          gradle assembleDebug --no-daemon --stacktrace
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "ndk;26.3.11579264" >/dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/26.3.11579264" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/26.3.11579264" >> "$GITHUB_ENV"
+          echo "NDK installÃ© dans: $ANDROID_HOME/ndk/26.3.11579264"
 
-      - uses: actions/upload-artifact@v4
+      - name: DÃ©pendances Node
+        run: |
+          set -e
+          cd "$APP_DIR"
+          npm install
+
+      - name: GÃ©nÃ©rer le projet Android (tauri android init)
+        run: |
+          set -e
+          cd "$APP_DIR"
+          npx tauri android init
+
+      - name: Compiler l'APK (debug)
+        env:
+          RUST_BACKTRACE: '1'
+        run: |
+          set -e
+          cd "$APP_DIR"
+          npx tauri android build --apk --debug
+
+      - name: Localiser l'APK produit
+        run: |
+          set -e
+          APK=$(find "$APP_DIR/src-tauri/gen/android" -name "*.apk" -path "*debug*" | head -n 1)
+          if [ -z "$APK" ]; then
+            echo "ERREUR: aucun APK trouvÃ©. Contenu gÃ©nÃ©rÃ©:"
+            find "$APP_DIR/src-tauri/gen/android" -name "*.apk" || true
+            exit 1
+          fi
+          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+          echo "APK: $APK"
+
+      - name: Publier l'APK
+        uses: actions/upload-artifact@v4
         with:
-          name: app-debug
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          name: studio-tibo-apk
+          path: ${{ env.APK_PATH }}
