@@ -10,14 +10,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Décompresser le zip
+      - name: Décompresser et localiser le projet
         run: |
-          ZIP=$(ls *.zip | head -n 1)
-          echo "Décompression de $ZIP"
+          set -e
+          echo "=== Fichiers à la racine ==="
+          ls -la
+          ZIP=$(ls *.zip 2>/dev/null | head -n 1)
+          if [ -z "$ZIP" ]; then echo "ERREUR: aucun .zip à la racine du dépôt"; exit 1; fi
+          echo "Zip trouvé: $ZIP"
           unzip -q "$ZIP" -d _extracted
-          DIR=$(dirname "$(find _extracted -name settings.gradle.kts | head -n 1)")
+          echo "=== Contenu extrait ==="
+          find _extracted -maxdepth 3 -type f | head -n 40
+          SETTINGS=$(find _extracted -name "settings.gradle*" | head -n 1)
+          if [ -z "$SETTINGS" ]; then echo "ERREUR: settings.gradle introuvable dans le zip"; exit 1; fi
+          DIR=$(dirname "$SETTINGS")
           echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
-          echo "Projet trouvé dans : $DIR"
+          echo "Projet trouvé dans: $DIR"
 
       - uses: actions/setup-java@v4
         with:
@@ -29,8 +37,10 @@ jobs:
           gradle-version: '8.7'
 
       - name: Compiler l'APK
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: |
+          set -e
+          cd "$PROJECT_DIR"
+          gradle assembleDebug --no-daemon --stacktrace
 
       - uses: actions/upload-artifact@v4
         with:
