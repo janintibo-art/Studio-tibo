@@ -1,0 +1,48 @@
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Décompresser et localiser le projet
+        run: |
+          set -e
+          echo "=== Fichiers à la racine ==="
+          ls -la
+          ZIP=$(ls *.zip 2>/dev/null | head -n 1)
+          if [ -z "$ZIP" ]; then echo "ERREUR: aucun .zip à la racine du dépôt"; exit 1; fi
+          echo "Zip trouvé: $ZIP"
+          unzip -q "$ZIP" -d _extracted
+          echo "=== Contenu extrait ==="
+          find _extracted -maxdepth 3 -type f | head -n 40
+          SETTINGS=$(find _extracted -name "settings.gradle*" | head -n 1)
+          if [ -z "$SETTINGS" ]; then echo "ERREUR: settings.gradle introuvable dans le zip"; exit 1; fi
+          DIR=$(dirname "$SETTINGS")
+          echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
+          echo "Projet trouvé dans: $DIR"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Compiler l'APK
+        run: |
+          set -e
+          cd "$PROJECT_DIR"
+          gradle assembleDebug --no-daemon --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
